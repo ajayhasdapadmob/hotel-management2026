@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RB Tech Solution - Owner License Admin</title>
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<section class="login-screen" id="adminLogin"><div class="login-card">
+<h1>🏨 RB Tech Solution<br><span style="font-size:14px">Owner License Admin</span></h1>
+<p class="muted">Customer accounts are created only by the owner.</p>
+<form id="ownerLogin"><label>Owner Username</label><input id="ownerUser" value="owner" required><label>Owner Password</label><input id="ownerPass" type="password" value="Owner@2026" required><button class="btn primary">Login</button></form>
+<div id="ownerMsg" class="message"></div>
+<p class="muted" style="font-size:12px;margin-top:12px">Online mode is used when the License Server is available. Offline mode is also available for the Owner on this browser. Default offline owner login: <strong>owner / Owner@2026</strong>. Connect the License Server before creating or changing central customer accounts.</p>
+</div></section>
+<section id="adminApp" class="app-screen hidden"><main style="padding:24px;max-width:1200px;margin:auto">
+<div class="page-header"><div><h2>License & Customer Control</h2><p>Create unique customer logins. Customers cannot create accounts.</p><div id="modeBadge" class="message success"></div></div><button class="btn secondary" id="ownerLogout">Logout</button></div>
+<div class="card" id="createCard"><div class="card-header"><h3>Create Customer</h3></div><form id="createCustomer" class="form-grid"><input id="cHotel" placeholder="Hotel Name" required><input id="cName" placeholder="Customer Name" required><input id="cMobile" placeholder="Mobile"><input id="cEmail" type="email" placeholder="Email"><input id="cLicense" placeholder="License ID (unique)" required><input id="cUsername" placeholder="Username (unique)" required><input id="cPassword" type="password" placeholder="Password" required><select id="cDays"><option value="30">30 Days</option><option value="365">1 Year</option></select><button class="btn primary" type="submit">Create Customer Login</button></form><div id="createMsg" class="message"></div></div>
+<div class="card"><div class="card-header"><h3>Customers</h3><button class="btn secondary" id="refresh">Refresh</button></div><div style="overflow:auto"><table class="data-table"><thead><tr><th>Hotel</th><th>Customer</th><th>Username</th><th>License</th><th>Status</th><th>Expiry</th><th>Device</th><th>Actions</th></tr></thead><tbody id="customers"></tbody></table></div></div>
+</main></section>
+<script>
+let TOKEN=''; let ONLINE=false;
+const $=id=>document.getElementById(id);
+function msg(id,t,ok=false){$(id).textContent=t;$(id).className='message '+(ok?'success':'error')}
+function baseUrl(){return String(window.LICENSE_SERVER_URL||'').replace(/\/$/,'')}
+function date(v){return v?new Date(v).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'-'}
+async function digest(text){if(window.crypto&&crypto.subtle){const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));return Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,'0')).join('')}return btoa(unescape(encodeURIComponent(text)))}
+async function cacheOwner(username,password,token){const salt=localStorage.getItem('ownerOfflineSalt')||Date.now().toString(36)+Math.random().toString(36).slice(2);localStorage.setItem('ownerOfflineSalt',salt);localStorage.setItem('ownerOfflineAuth',JSON.stringify({username,verifier:await digest(username+'|'+password+'|'+salt),token,createdAt:new Date().toISOString()}))}
+async function offlineOwnerLogin(username,password){try{const c=JSON.parse(localStorage.getItem('ownerOfflineAuth')||'null');if(!c){if(username==='owner'&&password==='Owner@2026'){await cacheOwner(username,password,'');TOKEN='';ONLINE=false;return true}return false}const salt=localStorage.getItem('ownerOfflineSalt')||'';const v=await digest(username+'|'+password+'|'+salt);if(v!==c.verifier)return false;TOKEN=c.token||'';ONLINE=false;return true}catch(e){return false}}
+function cachedCustomers(){try{return JSON.parse(localStorage.getItem('ownerCustomerCache')||'[]')}catch(e){return []}}
+function cacheCustomers(data){localStorage.setItem('ownerCustomerCache',JSON.stringify(data||[]))}
+async function request(path,opt={}){const url=(baseUrl()||'')+path;const headers={...(opt.headers||{}),'Content-Type':'application/json','x-admin-token':TOKEN};const r=await fetch(url,{...opt,headers});const text=await r.text();let j=null;try{j=text?JSON.parse(text):null}catch(e){throw new Error('Server returned an invalid response. Please check the License Server URL.')}if(!r.ok)throw new Error(j&&j.message||'Request failed');return j}
+function render(data){$('customers').innerHTML=(data||[]).map(x=>{const u=x.user||{},l=x.license||{};return `<tr><td>${l.hotelName||'-'}</td><td>${l.customerName||'-'}</td><td><strong>${u.username||'-'}</strong></td><td>${u.licenseId||l.licenseId||'-'}</td><td>${l.status||'-'}</td><td>${date(l.expiryDate)}</td><td>${u.deviceId?'Registered':'Not registered'}</td><td>${ONLINE?`<button class="btn secondary" onclick="resetDevice('${u.username}')">Reset Device</button> <button class="btn danger" onclick="suspend('${u.licenseId}')">Block</button>`:'Offline view'}</td></tr>`}).join('')||'<tr><td colspan="8">No customers created.</td></tr>'}
+async function load(){if(!ONLINE){render(cachedCustomers());return}try{const r=await request('/api/admin/customers');cacheCustomers(r.data);render(r.data)}catch(e){ONLINE=false;render(cachedCustomers());msg('ownerMsg','Server unavailable. Showing last synchronized customers in offline mode.');$('createCard').classList.add('hidden');$('modeBadge').textContent='OFFLINE MODE — last synchronized data';}}
+async function resetDevice(u){if(!ONLINE||!confirm('Reset this customer device authorization?'))return;try{await request('/api/admin/customers/'+encodeURIComponent(u)+'/reset-device',{method:'POST'});load()}catch(e){alert(e.message)}}
+async function suspend(id){if(!ONLINE||!confirm('Block this license?'))return;try{await request('/api/admin/licenses/'+encodeURIComponent(id)+'/suspend',{method:'PATCH'});load()}catch(e){alert(e.message)}}
+$('ownerLogin').onsubmit=async e=>{e.preventDefault();const username=$('ownerUser').value.trim(),password=$('ownerPass').value;try{const b=baseUrl();if(b){const r=await fetch(b+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});const text=await r.text();let j=null;try{j=text?JSON.parse(text):null}catch(x){j=null}if(r.ok&&j&&j.success){TOKEN=j.token;ONLINE=true;await cacheOwner(username,password,TOKEN);$('adminLogin').classList.add('hidden');$('adminApp').classList.remove('hidden');$('modeBadge').textContent='ONLINE MODE';$('createCard').classList.remove('hidden');await load();return}}const ok=await offlineOwnerLogin(username,password);if(!ok)throw new Error('Owner login failed. Connect the License Server once, login successfully, then offline mode will be available on this browser.');$('adminLogin').classList.add('hidden');$('adminApp').classList.remove('hidden');$('modeBadge').textContent='OFFLINE MODE — last synchronized data';$('createCard').classList.add('hidden');await load()}catch(e){msg('ownerMsg',e.message)}};
+$('createCustomer').onsubmit=async e=>{e.preventDefault();if(!ONLINE){msg('createMsg','Offline mode is read-only. Connect the License Server to create a customer.',false);return}try{const r=await request('/api/admin/customers',{method:'POST',body:JSON.stringify({hotelName:$('cHotel').value,customerName:$('cName').value,mobile:$('cMobile').value,email:$('cEmail').value,licenseId:$('cLicense').value,username:$('cUsername').value,password:$('cPassword').value,days:$('cDays').value})});msg('createMsg','Created: '+r.data.user.username+' / License '+r.data.license.licenseId,true);e.target.reset();load()}catch(e){msg('createMsg',e.message)}};
+$('refresh').onclick=load;$('ownerLogout').onclick=()=>location.reload();
+</script></body></html>
